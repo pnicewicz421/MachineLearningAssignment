@@ -1,0 +1,118 @@
+---
+title: "Prediction Assignment Writeup"
+author: "Peter Nicewicz"
+date: "11/4/2017"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Executive Summary
+This activity looks at the training and testing data sets for Weight Lifting Exercise Dataset. We split the training dataset into a training subset and a testing subset. The training subset is trained on three different models: random forests, support vector machines (SVM), and recursive partitioning (rpart). A confusion matrix is generated for the three models. The three models are then ensembled to see if an increased accuracy is achieve using generalized additive model (gam). The highest accuracy is achieved under the random forest model. The model is then applied to the original test set.
+
+# Load library and data
+```{r}
+
+#Load libraries
+library(caret)
+library(randomForest)
+library(rpart)
+library(e1071)
+library(ggplot2)
+
+#load files
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+```
+
+# Process data
+The first seven columns describe the user and the times and other identifying information associated with the dataset. This information is not necessary. We also perform a near-zero variance analysis on the training columns to see which columns have zero or near-zero variance (with the default 95/5 cut-off value for the most common value to the second most common value). We then calculate which fields have missing fields in the train set and remove those from both sets. Finally, the outcome variable is converted into factor format.
+```{r}
+#remove identifying columns
+training <- training[, -seq(1,7)]
+testing <- testing[, -seq(1,7)]
+
+#identify and remove columns with near zero variance
+zeroVar <- nearZeroVar(training)
+training <- training[,-zeroVar]
+testing <- testing[,-zeroVar]
+
+#calculate which fields have missing values
+cols <- unname(which(colSums(is.na(training)) > 0, arr.ind=TRUE))
+
+#remove fields with missing values
+training <- training[, -cols]
+testing <- testing[, -cols]
+
+training$classe <- as.factor(training$classe)
+```
+
+# Cross Validation
+We will use random subsampling for our cross validation of the training dataset. 75% of the training set will be a sub-training set and the remaining 25% will be testing.
+```{r}
+#Perform cross Validation
+#Split training set into random subtraining and subtesting sets
+inTrain <- createDataPartition(training$classe, p=0.75, list=FALSE)
+
+subTrain <- training[inTrain,]
+subTest <- training[-inTrain,]
+```
+
+# Training models
+We train three models: 1) random forest, 2) svm, and 3) rpart. The three models are run using their own packages rather than caret for processing speed. The sub testing data is then predicted on the three models and a confusion Matrix is created with the actual outcomes from the testing subtest. Show variable importance for the random forest model.
+
+```{r}
+#Model 1: Random forest
+model1 <- randomForest(classe ~ ., data=subTrain)
+model1predict <- predict(model1, newdata=subTest)
+confusionMatrix(subTest$classe, model1predict)
+
+
+
+#Model 2: SVM
+model2 <- svm(classe ~ ., data=subTrain)
+model2predict <- predict(model2, newdata=subTest)
+confusionMatrix(subTest$classe, model2predict)
+
+#Model 3: Recursive partitioning for classification
+model3 <-rpart(classe ~ ., data=subTrain)
+model3predict <- predict(model3, newdata=subTest)
+#The model prediction is in a different format than the other models -- pick the one that has the highest likelihood for every row
+model3answer <- as.factor(colnames(model3predict)[apply(model3predict,1,which.max)])
+confusionMatrix(subTest$classe, model3answer)
+```
+The highest accuracy comes from the first model (random forest) at 99.73%. We can also try ensembling the three to see if there is a higher accuracy.
+
+# Ensemble model
+```{r}
+#Create a data frame with the answers for each of the models and the test subtest answer
+combinedTestData <- data.frame(model1=model1predict, model2=model2predict, model3=model3answer, answer=subTest$classe)
+#Train the ensembled model
+comb.fit <- suppressWarnings(train(answer ~ ., method="gam", data=combinedTestData))
+#Predict using the combined test subtest
+comb.pred.test <- predict(comb.fit, combinedTestData)
+#Generate confusion matrix
+confusionMatrix(subTest$classe, comb.pred.test)
+```
+The combined model only yields a 47.7% accuracy. We should disregard, and go with the random forest model.
+
+# Plot the random forest model
+The two most important variable in the random forest model are the roll_belt and yaw_belt. We construct a simple plot with roll_belt (x) against yaw_belt (y), with the color being the outcome (classe).
+
+```{r}
+#show variable importance for model 1
+varImp(model1)
+
+p <- qplot(roll_belt, yaw_belt, col=classe, data=subTrain)
+p
+```
+
+#Test with testing sample
+We then apply the random forest model (model 1) to the actual testing set
+```{r}
+prediction <- predict(model1, newdata=testing)
+```
